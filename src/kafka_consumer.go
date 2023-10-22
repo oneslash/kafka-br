@@ -1,6 +1,7 @@
 package src
 
 import (
+	"crypto/tls"
 	"fmt"
 	"log"
 	"os"
@@ -13,8 +14,23 @@ type KafkaConsumer struct {
 	consumer sarama.Consumer
 }
 
-func NewKafkaConsumer(bootstrap []string) *KafkaConsumer {
+func NewKafkaConsumer(bootstrap []string, sasl *SASLConfig) *KafkaConsumer {
+	sarama.Logger = log.New(os.Stdout, "[sarama] ", log.LstdFlags)
 	conf := sarama.NewConfig()
+	log.Printf("SASL %v", sasl)
+	if sasl != nil {
+		conf.Net.TLS.Enable = true
+		conf.Net.TLS.Config = &tls.Config{
+			InsecureSkipVerify: true, // This skips certificate verification, consider adding the Confluent Root CA for production scenarios.
+		}
+		conf.Net.SASL.Enable = true
+		conf.Net.SASL.User = sasl.Username
+		conf.Net.SASL.Password = sasl.Password
+		conf.Net.SASL.Mechanism = sarama.SASLTypePlaintext
+		conf.ClientID = "kafka-br"
+	}
+
+	log.Printf("ClientID %v", conf.ClientID)
 	consumer, err := sarama.NewConsumer(bootstrap, conf)
 	if err != nil {
 		panic(err)
