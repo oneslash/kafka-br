@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
 
 	"github.com/IBM/sarama"
 )
@@ -56,21 +57,35 @@ func (k *KafkaConsumer) Backup(topic string, output string) error {
 		return err
 	}
 
+	wg := sync.WaitGroup{}
 	for _, partition := range partitions {
+		log.Printf("Starting consumer for partition %d", partition)
 		pc, err := k.consumer.ConsumePartition(topic, partition, sarama.OffsetOldest)
 		if err != nil {
 			log.Printf("Failed to start consumer for partition", partition, ":", err)
 		}
-		defer pc.Close()
-
-		for message := range pc.Messages() {
-			_, err := out.WriteString(fmt.Sprintf("%s\n", message.Value))
-			if err != nil {
-				log.Printf("Failed to write to backup file:", err)
-			}
-		}
+	
+		wg.Add(1)
+		go k.processMessages(pc, out) 
 	}
 
+	wg.Wait()
+	return nil
+}
+
+func (k *KafkaConsumer) countMessagesInPartition(topic string, partition int32) {
+	newestOffset, err := k.consumer.GetOffset(topic, partition, sarama.OffsetNewest)
+}
+
+func (k *KafkaConsumer) processMessages(pc sarama.PartitionConsumer, out *os.File) error {
+	defer pc.Close()
+	for message := range pc.Messages() {
+		println(message.Value)
+		_, err := out.WriteString(fmt.Sprintf("%s\n", message.Value))
+		if err != nil {
+			log.Printf("Failed to write to backup file: %s", err)
+		}
+	}
 	return nil
 }
 
