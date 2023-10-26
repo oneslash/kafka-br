@@ -12,13 +12,13 @@ import (
 
 // KafkaConsumer is a wrapper around sarama.Consumer
 type KafkaConsumer struct {
+	client   sarama.Client
 	consumer sarama.Consumer
 }
 
 func NewKafkaConsumer(bootstrap []string, sasl *SASLConfig) *KafkaConsumer {
 	sarama.Logger = log.New(os.Stdout, "[sarama] ", log.LstdFlags)
 	conf := sarama.NewConfig()
-	log.Printf("SASL %v", sasl)
 	if sasl != nil {
 		conf.Net.TLS.Enable = true
 		conf.Net.TLS.Config = &tls.Config{
@@ -31,13 +31,18 @@ func NewKafkaConsumer(bootstrap []string, sasl *SASLConfig) *KafkaConsumer {
 		conf.ClientID = "kafka-br"
 	}
 
-	log.Printf("ClientID %v", conf.ClientID)
+	client, err := sarama.NewClient(bootstrap, conf)
+	if err != nil {
+		panic(err)
+	}
+
 	consumer, err := sarama.NewConsumer(bootstrap, conf)
 	if err != nil {
 		panic(err)
 	}
 
 	return &KafkaConsumer{
+		client:   client,
 		consumer: consumer,
 	}
 }
@@ -51,7 +56,7 @@ func (k *KafkaConsumer) Backup(topic string, output string) error {
 	}
 	defer out.Close()
 
-	partitions, err := k.consumer.Partitions(topic)
+	partitions, err := k.client.Partitions(topic)
 	if err != nil {
 		log.Printf("Failed to get the list of partitions:", err)
 		return err
@@ -62,25 +67,39 @@ func (k *KafkaConsumer) Backup(topic string, output string) error {
 		log.Printf("Starting consumer for partition %d", partition)
 		pc, err := k.consumer.ConsumePartition(topic, partition, sarama.OffsetOldest)
 		if err != nil {
-			log.Printf("Failed to start consumer for partition", partition, ":", err)
+			log.Print("Failed to start consumer for partition", partition, ":", err)
 		}
-	
-		wg.Add(1)
-		go k.processMessages(pc, out) 
+
+		if count, _ := k.countMessagesInPartition(topic, partition); count > 0 {
+			wg.Add(1)
+			go func() {
+				k.processMessages(pc, out, &wg)
+			}()
+		}
 	}
 
 	wg.Wait()
 	return nil
 }
 
-func (k *KafkaConsumer) countMessagesInPartition(topic string, partition int32) {
-	newestOffset, err := k.consumer.GetOffset(topic, partition, sarama.OffsetNewest)
+func (k *KafkaConsumer) countMessagesInPartition(topic string, partition int32) (int64, error) {
+	newestOffset, err := k.client.GetOffset(topic, partition, sarama.OffsetNewest)
+	if err != nil {
+		return 0, err
+	}
+
+	oldestOffset, err := k.client.GetOffset(topic, partition, sarama.OffsetOldest)
+	if err != nil {
+		return 0, err
+	}
+
+	return newestOffset - oldestOffset, nil
 }
 
-func (k *KafkaConsumer) processMessages(pc sarama.PartitionConsumer, out *os.File) error {
+func (k *KafkaConsumer) processMessages(pc sarama.PartitionConsumer, out *os.File, wg *sync.WaitGroup) error {
+	defer wg.Done()
 	defer pc.Close()
 	for message := range pc.Messages() {
-		println(message.Value)
 		_, err := out.WriteString(fmt.Sprintf("%s\n", message.Value))
 		if err != nil {
 			log.Printf("Failed to write to backup file: %s", err)
@@ -90,5 +109,5 @@ func (k *KafkaConsumer) processMessages(pc sarama.PartitionConsumer, out *os.Fil
 }
 
 func (k *KafkaConsumer) Close() {
-	k.consumer.Close()
+	k.client.Close()
 }
