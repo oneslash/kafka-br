@@ -17,7 +17,6 @@ type KafkaConsumer struct {
 }
 
 func NewKafkaConsumer(bootstrap []string, sasl *SASLConfig) *KafkaConsumer {
-	sarama.Logger = log.New(os.Stdout, "[sarama] ", log.LstdFlags)
 	conf := sarama.NewConfig()
 	if sasl != nil {
 		conf.Net.TLS.Enable = true
@@ -51,14 +50,14 @@ func NewKafkaConsumer(bootstrap []string, sasl *SASLConfig) *KafkaConsumer {
 func (k *KafkaConsumer) Backup(topic string, output string) error {
 	out, err := os.Create(output)
 	if err != nil {
-		log.Printf("Failed to create backup file:", err)
+		log.Print("Failed to create backup file:", err)
 		return err
 	}
 	defer out.Close()
 
 	partitions, err := k.client.Partitions(topic)
 	if err != nil {
-		log.Printf("Failed to get the list of partitions:", err)
+		log.Print("Failed to get the list of partitions:", err)
 		return err
 	}
 
