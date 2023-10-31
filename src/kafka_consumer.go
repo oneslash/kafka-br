@@ -98,10 +98,16 @@ func (k *KafkaConsumer) countMessagesInPartition(topic string, partition int32) 
 func (k *KafkaConsumer) processMessages(pc sarama.PartitionConsumer, out *os.File, wg *sync.WaitGroup) error {
 	defer wg.Done()
 	defer pc.Close()
+
+	offsetToStop := pc.HighWaterMarkOffset() - 1
 	for message := range pc.Messages() {
 		_, err := out.WriteString(fmt.Sprintf("%s\n", message.Value))
 		if err != nil {
 			log.Printf("Failed to write to backup file: %s", err)
+		}
+		if message.Offset == offsetToStop {
+			log.Printf("Reached offset %d, stopping consumer", offsetToStop)
+			return nil
 		}
 	}
 	return nil
